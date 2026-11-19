@@ -1,10 +1,12 @@
-package modelo;
+package Modelo;
 
-import excepciones.RutaInvalidaException;
+import Excepciones.RutaInvalidaException;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class AnalizadorRecursivo {
 
@@ -43,18 +45,22 @@ public class AnalizadorRecursivo {
     public EstadisticasDirectorio analizar(File raiz, int profundidadMax) {
         reiniciarEstado();
         EstadisticasDirectorio stats = new EstadisticasDirectorio();
-        List<GrupoDuplicados> listaGrupos = new ArrayList<>();
+        Map<String, List<File>> mapaDuplicados = new HashMap<>();
 
-        recorrerEstadisticas(raiz, 0, profundidadMax, stats, listaGrupos);
-        stats.filtrarYAsignarDuplicados(listaGrupos);
+        recorrerEstadisticas(raiz, 0, profundidadMax, stats, mapaDuplicados);
+        stats.filtrarYAsignarDuplicados(mapaDuplicados);
         return stats;
     }
 
     private void recorrerEstadisticas(File actual, int nivel, int profundidadMax,
-                                      EstadisticasDirectorio stats,
-                                      List<GrupoDuplicados> listaGrupos) {
-        if (cancelado) return;
-        if (profundidadMax > 0 && nivel > profundidadMax) return;
+            EstadisticasDirectorio stats,
+            Map<String, List<File>> mapaDuplicados) {
+        if (cancelado) {
+            return;
+        }
+        if (profundidadMax > 0 && nivel > profundidadMax) {
+            return;
+        }
 
         try {
             String canonica = actual.getCanonicalPath();
@@ -82,38 +88,108 @@ public class AnalizadorRecursivo {
         }
 
         for (File hijo : hijos) {
-            if (cancelado) return;
+            if (cancelado) {
+                return;
+            }
 
             if (hijo.isDirectory()) {
                 stats.incrementarTotalCarpetas();
-                recorrerEstadisticas(hijo, nivel + 1, profundidadMax, stats, listaGrupos);
+                recorrerEstadisticas(hijo, nivel + 1, profundidadMax, stats, mapaDuplicados);
             } else if (hijo.isFile()) {
-                procesarArchivoEstadistica(hijo, stats, listaGrupos);
+                procesarArchivoEstadistica(hijo, stats, mapaDuplicados);
             }
         }
     }
 
     private void procesarArchivoEstadistica(File archivo, EstadisticasDirectorio stats,
-                                            List<GrupoDuplicados> listaGrupos) {
+            Map<String, List<File>> mapaDuplicados) {
         long tamano = archivo.length();
         String nombre = archivo.getName();
         String ext = obtenerExtension(nombre);
 
         stats.registrarArchivo(archivo, ext, tamano);
 
-        GrupoDuplicados grupoEncontrado = null;
-        for (GrupoDuplicados grupo : listaGrupos) {
-            if (grupo.getNombre().equals(nombre) && grupo.getTamano() == tamano) {
-                grupoEncontrado = grupo;
-                break;
-            }
+        String clave = nombre + "::" + tamano;
+        if (!mapaDuplicados.containsKey(clave)) {
+            mapaDuplicados.put(clave, new ArrayList<>());
+        }
+        mapaDuplicados.get(clave).add(archivo);
+    }
+
+    public List<ArchivoInfo> buscar(File raiz, FiltroBusqueda filtro) {
+        reiniciarEstado();
+        List<ArchivoInfo> resultados = new ArrayList<>();
+        recorrerBusqueda(raiz, 0, filtro, resultados);
+        bitacora.registrar("BUSCAR", raiz.getAbsolutePath() + " (Texto: '" + filtro.getTexto() + "')");
+        return resultados;
+    }
+
+    private void recorrerBusqueda(File actual, int nivel, FiltroBusqueda filtro, List<ArchivoInfo> resultados) {
+        if (cancelado) {
+            return;
+        }
+        if (filtro.getProfundidadMax() > 0 && nivel > filtro.getProfundidadMax()) {
+            return;
         }
 
-        if (grupoEncontrado == null) {
-            grupoEncontrado = new GrupoDuplicados(nombre, tamano);
-            listaGrupos.add(grupoEncontrado);
+        try {
+            String canonica = actual.getCanonicalPath();
+            if (rutasVisitadas.contains(canonica)) {
+                return;
+            }
+            rutasVisitadas.add(canonica);
+        } catch (IOException e) {
+            return;
         }
-        grupoEncontrado.agregarArchivo(archivo);
+
+        File[] hijos = actual.listFiles();
+        if (hijos == null) {
+            return;
+        }
+
+        for (File hijo : hijos) {
+            if (cancelado) {
+                return;
+            }
+
+            if (hijo.isDirectory()) {
+                recorrerBusqueda(hijo, nivel + 1, filtro, resultados);
+            } else if (hijo.isFile()) {
+                if (cumpleFiltros(hijo, filtro)) {
+                    resultados.add(new ArchivoInfo(hijo));
+                }
+            }
+        }
+    }
+
+    private boolean cumpleFiltros(File archivo, FiltroBusqueda filtro) {
+        String nombre = archivo.getName().toLowerCase();
+        if (!filtro.getTexto().isEmpty() && !nombre.contains(filtro.getTexto())) {
+            return false;
+        }
+        if (!filtro.getExtension().isEmpty()) {
+            String ext = obtenerExtension(nombre);
+            if (!ext.equals(filtro.getExtension())) {
+                return false;
+            }
+        }
+        long tamano = archivo.length();
+        if (tamano < filtro.getTamanoMinBytes()) {
+            return false;
+        }
+        if (filtro.getTamanoMaxBytes() > 0 && tamano > filtro.getTamanoMaxBytes()) {
+            return false;
+        }
+
+        long mod = archivo.lastModified();
+        if (filtro.getFechaMinMillis() > 0 && mod < filtro.getFechaMinMillis()) {
+            return false;
+        }
+        if (filtro.getFechaMaxMillis() > 0 && mod > filtro.getFechaMaxMillis()) {
+            return false;
+        }
+
+        return true;
     }
 
     public String obtenerExtension(String nombreArchivo) {

@@ -1,0 +1,6 @@
+ultimaExt=
+ultimaRuta=C:\
+profundidad=0
+tamMin=0
+ultimoTexto=prueba
+tamMax=0
